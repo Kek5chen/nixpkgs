@@ -1,36 +1,46 @@
-{ lib
-, buildDotnetModule
-, dotnetCorePackages
-, fetchzip
-, libX11
-, libgdiplus
-, ffmpeg
-, openal
-, libsoundio
-, sndio
-, pulseaudio
-, vulkan-loader
-, glew
-, libGL
-, libICE
-, libSM
-, libXcursor
-, libXext
-, libXi
-, libXrandr
-, udev
-, SDL2
-, SDL2_mixer
+{
+  lib,
+  buildDotnetModule,
+  dotnetCorePackages,
+  darwin,
+  fetchFromGitHub,
+  libX11,
+  libgdiplus,
+  ffmpeg,
+  openal,
+  libsoundio,
+  sndio,
+  stdenv,
+  pulseaudio,
+  vulkan-loader,
+  glew,
+  libGL,
+  libICE,
+  libSM,
+  libXcursor,
+  libXext,
+  libXi,
+  libXrandr,
+  udev,
+  SDL2,
+  SDL2_mixer,
 }:
 
 buildDotnetModule rec {
   pname = "ryujinx";
-  version = "1.1.1401"; # Based off of the official github actions builds: https://github.com/Ryujinx/Ryujinx/actions/workflows/release.yml
+  version = "1.2.72";
 
-  src = fetchzip {
-    url = "https://archive.org/download/ryujinx-5dbba-07e-33e-83c-9047dcbb-701c-9655edbbe-89086.tar/Ryujinx-5dbba07e33e83c9047dcbb701c9655edbbe89086.tar.gz";
-    hash = "sha256-UeJ3KE5e5H9crqroAxjmxYTf/Z4cbj41a6/1HW2nLcA=";
+  src = fetchFromGitHub {
+    owner = "GreemDev";
+    repo = "Ryujinx";
+    rev = "master";
+    hash = "sha256-5lfqx4zoHw6b36e4rA5uh3bGmD1BLtGPjUMh3y4NfTg=";
   };
+
+  nativeBuildInputs = lib.optional stdenv.isDarwin [
+    darwin.sigtool
+    darwin.cctools
+  ];
 
   enableParallelBuilding = false;
 
@@ -39,35 +49,41 @@ buildDotnetModule rec {
 
   nugetDeps = ./deps.nix;
 
-  runtimeDeps = [
-    libX11
-    libgdiplus
-    SDL2_mixer
-    openal
-    libsoundio
-    sndio
-    pulseaudio
-    vulkan-loader
-    ffmpeg
-    udev
+  runtimeDeps =
+    [
+      libX11
+      libgdiplus
+      SDL2_mixer
+      openal
+      libsoundio
+      sndio
+      vulkan-loader
+      ffmpeg
 
-    # Avalonia UI
-    glew
-    libICE
-    libSM
-    libXcursor
-    libXext
-    libXi
-    libXrandr
+      # Avalonia UI
+      glew
+      libICE
+      libSM
+      libXcursor
+      libXext
+      libXi
+      libXrandr
 
-    # Headless executable
-    libGL
-    SDL2
-  ];
+      # Headless executable
+      libGL
+      SDL2
+    ]
+    ++ lib.optional (!stdenv.isDarwin) [
+      udev
+      pulseaudio
+    ]
+    ++ lib.optional stdenv.isDarwin [ darwin.moltenvk ];
 
   projectFile = "Ryujinx.sln";
   testProjectFile = "src/Ryujinx.Tests/Ryujinx.Tests.csproj";
-  doCheck = true;
+
+  # Tests on Darwin currently fail because of Ryujinx.Tests.Unicorn
+  doCheck = !stdenv.isDarwin;
 
   dotnetFlags = [
     "/p:ExtraDefineConstants=DISABLE_UPDATER%2CFORCE_EXTERNAL_BASE_DIR"
@@ -78,50 +94,74 @@ buildDotnetModule rec {
     "Ryujinx"
   ];
 
-  makeWrapperArgs = [
-    # Without this Ryujinx fails to start on wayland. See https://github.com/Ryujinx/Ryujinx/issues/2714
-    "--set SDL_VIDEODRIVER x11"
-  ];
+  # Is this still relevant in the fork?
+  # makeWrapperArgs = [
+  #   # Without this Ryujinx fails to start on wayland. See https://github.com/Ryujinx/Ryujinx/issues/2714
+  #   "--set SDL_VIDEODRIVER x11"
+  # ];
 
-  preInstall = ''
-    # workaround for https://github.com/Ryujinx/Ryujinx/issues/2349
-    mkdir -p $out/lib/sndio-6
-    ln -s ${sndio}/lib/libsndio.so $out/lib/sndio-6/libsndio.so.6
+  # this too?
+  # preInstall = ''
+  #   # workaround for https://github.com/Ryujinx/Ryujinx/issues/2349
+  #   mkdir -p $out/lib/sndio-6
+  #   ln -s ${sndio}/lib/libsndio.so $out/lib/sndio-6/libsndio.so.6
+  # '';
+
+  # Hotpatch for mac until #182 is merged upstream.
+  postPatch = ''
+    substituteInPlace distribution/macos/create_app_bundle.sh --replace-quiet " --deep" "";
+    substituteInPlace distribution/macos/create_macos_build_ava.sh --replace-quiet " --deep" "";
+    substituteInPlace distribution/macos/create_macos_build_headless.sh --replace-quiet " --deep" "";
+    substituteInPlace src/Ryujinx.Headless.SDL2/Ryujinx.Headless.SDL2.csproj --replace-quiet " --deep" "";
+    substituteInPlace src/Ryujinx/Ryujinx.csproj --replace-quiet " --deep" "";
   '';
 
   preFixup = ''
-    mkdir -p $out/share/{applications,icons/hicolor/scalable/apps,mime/packages}
-    pushd ${src}/distribution/linux
+    ${lib.optionalString stdenv.isLinux ''
+      mkdir -p $out/share/{applications,icons/hicolor/scalable/apps,mime/packages}
 
-    install -D ./Ryujinx.desktop $out/share/applications/Ryujinx.desktop
-    install -D ./Ryujinx.sh $out/bin/Ryujinx.sh
-    install -D ./mime/Ryujinx.xml $out/share/mime/packages/Ryujinx.xml
-    install -D ../misc/Logo.svg $out/share/icons/hicolor/scalable/apps/Ryujinx.svg
+      pushd ${src}/distribution/linux
 
-    substituteInPlace $out/share/applications/Ryujinx.desktop \
-      --replace "Ryujinx.sh %f" "$out/bin/Ryujinx.sh %f"
+      install -D ./Ryujinx.desktop  $out/share/applications/Ryujinx.desktop
+      install -D ./Ryujinx.sh       $out/bin/Ryujinx.sh
+      install -D ./mime/Ryujinx.xml $out/share/mime/packages/Ryujinx.xml
+      install -D ../misc/Logo.svg   $out/share/icons/hicolor/scalable/apps/Ryujinx.svg
 
-    ln -s $out/bin/Ryujinx $out/bin/ryujinx
+      substituteInPlace $out/share/applications/Ryujinx.desktop \
+        --replace "Ryujinx.sh %f" "$out/bin/Ryujinx.sh %f"
 
-    popd
+      popd
+    ''}
+
+    # Don't make a softlink on OSX because of its case insensitivity
+    ${lib.optionalString (!stdenv.isDarwin) "ln -s $out/bin/Ryujinx $out/bin/ryujinx"}
   '';
 
   passthru.updateScript = ./updater.sh;
 
   meta = with lib; {
-    homepage = "https://ryujinx.org/";
-    changelog = "https://github.com/Ryujinx/Ryujinx/wiki/Changelog";
-    description = "Experimental Nintendo Switch Emulator written in C#";
+    homepage = "https://github.com/GreemDev/Ryujinx";
+    changelog = "https://github.com/GreemDev/Ryujinx/wiki/Changelog";
+    description = "Experimental Nintendo Switch Emulator written in C# (QoL fork)";
     longDescription = ''
       Ryujinx is an open-source Nintendo Switch emulator, created by gdkchan,
       written in C#. This emulator aims at providing excellent accuracy and
       performance, a user-friendly interface and consistent builds. It was
       written from scratch and development on the project began in September
-      2017.
+      2017. The project has since been abandoned on October 1st 2024 and QoL
+      updates are now managed under a fork.
     '';
     license = licenses.mit;
-    maintainers = with maintainers; [ jk artemist ];
-    platforms = [ "x86_64-linux" "aarch64-linux" ];
+    maintainers = with maintainers; [
+      jk
+      artemist
+      kekschen
+    ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "aarch64-darwin"
+    ];
     mainProgram = "Ryujinx";
   };
 }
