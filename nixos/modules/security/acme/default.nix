@@ -539,8 +539,9 @@ let
 
           # Check if we can renew.
           # We can only renew if the list of domains has not changed.
+          # Do NOT gate renewal on the configured email (changing contact email must not break renewals).
           # We also need an account key. Avoids #190493
-          if cmp -s domainhash.txt certificates/domainhash.txt && [ -e '${certificateKey}' ] && [ -e 'certificates/${keyName}.crt' ] && [ -n "$(find accounts -name '${data.email}.key')" ]; then
+          if cmp -s domainhash.txt certificates/domainhash.txt && [ -e '${certificateKey}' ] && [ -e 'certificates/${keyName}.crt' ]; then
 
             # Even if a cert is not expired, it may be revoked by the CA.
             # Try to renew, and silently fail if the cert is not expired.
